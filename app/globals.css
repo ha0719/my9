@@ -72,6 +72,8 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei",
+      "Noto Sans SC", "Segoe UI", system-ui, sans-serif;
   }
 }
 

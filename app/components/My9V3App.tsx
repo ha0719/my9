@@ -217,14 +217,6 @@ export default function My9V3App({
     }
   }, [games, creatorName, draftHydrated, draftStorageKey, initialShareId, isReadonly]);
 
-  useEffect(() => {
-    if (!shareId || !isReadonly) return;
-    fetch(`/api/share/touch?id=${encodeURIComponent(shareId)}`, {
-      method: "POST",
-      cache: "no-store",
-    }).catch(() => {});
-  }, [shareId, isReadonly]);
-
   function pushToast(kindValue: ToastKind, message: string) {
     setToast({ kind: kindValue, message });
   }

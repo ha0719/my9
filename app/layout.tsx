@@ -1,12 +1,12 @@
 import type React from "react";
 import type { Metadata } from "next";
-import { Noto_Sans_SC } from "next/font/google";
 import { Analytics } from "@vercel/analytics/react";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import GoogleAnalytics from "@/components/GoogleAnalytics";
 import "./globals.css";
 
-const notoSansSC = Noto_Sans_SC({ subsets: ["latin"], weight: ["400", "500", "700", "900"] });
+const ENABLE_VERCEL_ANALYTICS = process.env.NEXT_PUBLIC_ENABLE_VERCEL_ANALYTICS === "1";
+const ENABLE_VERCEL_SPEED_INSIGHTS = process.env.NEXT_PUBLIC_ENABLE_VERCEL_SPEED_INSIGHTS === "1";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://my9.shatranj.space"),
@@ -43,9 +43,9 @@ export default function RootLayout({
       <head>
         <GoogleAnalytics />
       </head>
-      <body className={notoSansSC.className}>
-        <Analytics />
-        <SpeedInsights />
+      <body>
+        {ENABLE_VERCEL_ANALYTICS ? <Analytics /> : null}
+        {ENABLE_VERCEL_SPEED_INSIGHTS ? <SpeedInsights /> : null}
         {children}
       </body>
     </html>

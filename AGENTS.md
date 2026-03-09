@@ -55,6 +55,8 @@
   - `NEON_DATABASE_PGPASSWORD`（或 `NEON_DATABASE_POSTGRES_PASSWORD`）
   - `NEON_DATABASE_PGDATABASE`（或 `NEON_DATABASE_POSTGRES_DATABASE`）
   - 可选：`NEON_DATABASE_PGPORT`、`NEON_DATABASE_PGSSLMODE`（默认 `require`）
+  - 可选：`NEXT_PUBLIC_ENABLE_VERCEL_ANALYTICS=1`（默认关闭，避免额外请求）
+  - 可选：`NEXT_PUBLIC_ENABLE_VERCEL_SPEED_INSIGHTS=1`（默认关闭，避免额外请求）
   - 生产环境默认禁用内存 fallback（数据库异常会直接报错）；可用 `MY9_ALLOW_MEMORY_FALLBACK=1` 临时放开
 - 分享图封面当前通过 `wsrv.nl` 在前端拉取并绘制；修改该链路时需评估跨域与流量成本影响。
 
