@@ -22,13 +22,11 @@ const SHARES_V1_TABLE = "my9_shares_v1";
 const SHARES_V2_TABLE = "my9_share_registry_v2";
 const SHARE_ALIAS_TABLE = "my9_share_alias_v1";
 const SUBJECT_DIM_TABLE = "my9_subject_dim_v1";
-const TREND_COUNT_ALL_TABLE = "my9_trend_count_all_v1";
-const TREND_COUNT_DAY_TABLE = "my9_trend_count_day_v1";
+const TREND_COUNT_ALL_TABLE = "my9_trend_subject_all_v2";
+const TREND_COUNT_DAY_TABLE = "my9_trend_subject_day_v2";
 const SHARES_V2_KIND_CREATED_IDX = `${SHARES_V2_TABLE}_kind_created_idx`;
 const SHARES_V2_TIER_CREATED_IDX = `${SHARES_V2_TABLE}_tier_created_idx`;
 const SHARE_ALIAS_TARGET_IDX = `${SHARE_ALIAS_TABLE}_target_idx`;
-const TREND_ALL_KIND_VIEW_BUCKET_IDX = `${TREND_COUNT_ALL_TABLE}_kind_view_bucket_idx`;
-const TREND_DAY_KIND_VIEW_DAY_IDX = `${TREND_COUNT_DAY_TABLE}_kind_view_day_idx`;
 
 const CHECKPOINT_PATH = resolve(process.cwd(), "scripts/.migrate-shares-v1.checkpoint.json");
 
@@ -155,29 +153,20 @@ function createContentHash(kind, creatorName, payload) {
   return createHash("sha256").update(canonical).digest("hex");
 }
 
-function buildIncrements(payload, subjects, createdAt) {
+function buildIncrements(payload, createdAt) {
   const dayKey = toUtcDayKey(createdAt);
-  const increments = [];
+  const countBySubject = new Map();
+
   for (const slot of payload) {
     if (!slot) continue;
-    const subject = subjects.get(slot.sid);
-    increments.push({ dayKey, view: "overall", bucketKey: "overall", subjectId: slot.sid, count: 1 });
-    const genres = subject?.genres && subject.genres.length > 0 ? subject.genres : ["未分类"];
-    for (const genre of genres) {
-      increments.push({ dayKey, view: "genre", bucketKey: genre, subjectId: slot.sid, count: 1 });
-    }
-    if (typeof subject?.releaseYear === "number") {
-      increments.push({ dayKey, view: "year", bucketKey: String(subject.releaseYear), subjectId: slot.sid, count: 1 });
-      increments.push({
-        dayKey,
-        view: "decade",
-        bucketKey: `${Math.floor(subject.releaseYear / 10) * 10}s`,
-        subjectId: slot.sid,
-        count: 1,
-      });
-    }
+    countBySubject.set(slot.sid, (countBySubject.get(slot.sid) ?? 0) + 1);
   }
-  return increments;
+
+  return Array.from(countBySubject.entries()).map(([subjectId, count]) => ({
+    dayKey,
+    subjectId,
+    count,
+  }));
 }
 
 function loadCheckpoint() {
@@ -258,41 +247,22 @@ async function ensureV2Schema(sql) {
   await sql.query(
     `
     CREATE TABLE IF NOT EXISTS ${TREND_COUNT_ALL_TABLE} (
-      kind TEXT NOT NULL,
-      view TEXT NOT NULL,
-      bucket_key TEXT NOT NULL,
-      subject_id TEXT NOT NULL,
+      subject_id TEXT PRIMARY KEY,
       count BIGINT NOT NULL,
-      updated_at BIGINT NOT NULL,
-      PRIMARY KEY (kind, view, bucket_key, subject_id)
+      updated_at BIGINT NOT NULL
     )
-    `
-  );
-  await sql.query(
-    `
-    CREATE INDEX IF NOT EXISTS ${TREND_ALL_KIND_VIEW_BUCKET_IDX}
-    ON ${TREND_COUNT_ALL_TABLE} (kind, view, bucket_key)
     `
   );
 
   await sql.query(
     `
     CREATE TABLE IF NOT EXISTS ${TREND_COUNT_DAY_TABLE} (
-      kind TEXT NOT NULL,
       day_key INT NOT NULL,
-      view TEXT NOT NULL,
-      bucket_key TEXT NOT NULL,
       subject_id TEXT NOT NULL,
       count BIGINT NOT NULL,
       updated_at BIGINT NOT NULL,
-      PRIMARY KEY (kind, day_key, view, bucket_key, subject_id)
+      PRIMARY KEY (day_key, subject_id)
     )
-    `
-  );
-  await sql.query(
-    `
-    CREATE INDEX IF NOT EXISTS ${TREND_DAY_KIND_VIEW_DAY_IDX}
-    ON ${TREND_COUNT_DAY_TABLE} (kind, view, day_key)
     `
   );
 }
@@ -469,12 +439,9 @@ async function main() {
           }
         }
 
-        for (const inc of buildIncrements(item.payload, item.subjects, item.createdAt)) {
+        for (const inc of buildIncrements(item.payload, item.createdAt)) {
           trendRows.push({
-            kind: item.kind,
             day_key: inc.dayKey,
-            view: inc.view,
-            bucket_key: inc.bucketKey,
             subject_id: inc.subjectId,
             count: inc.count,
             updated_at: item.updatedAt,
@@ -539,26 +506,23 @@ async function main() {
       await sql.query(
         `
         WITH input_rows AS (
-          SELECT kind, day_key, view, bucket_key, subject_id, count, updated_at
+          SELECT day_key, subject_id, count, updated_at
           FROM jsonb_to_recordset($1::jsonb) AS t(
-            kind text,
             day_key int,
-            view text,
-            bucket_key text,
             subject_id text,
             count bigint,
             updated_at bigint
           )
         ),
         folded AS (
-          SELECT kind, view, bucket_key, subject_id, SUM(count)::BIGINT AS count, MAX(updated_at)::BIGINT AS updated_at
+          SELECT subject_id, SUM(count)::BIGINT AS count, MAX(updated_at)::BIGINT AS updated_at
           FROM input_rows
-          GROUP BY kind, view, bucket_key, subject_id
+          GROUP BY subject_id
         )
-        INSERT INTO ${TREND_COUNT_ALL_TABLE} (kind, view, bucket_key, subject_id, count, updated_at)
-        SELECT kind, view, bucket_key, subject_id, count, updated_at
+        INSERT INTO ${TREND_COUNT_ALL_TABLE} (subject_id, count, updated_at)
+        SELECT subject_id, count, updated_at
         FROM folded
-        ON CONFLICT (kind, view, bucket_key, subject_id) DO UPDATE SET
+        ON CONFLICT (subject_id) DO UPDATE SET
           count = ${TREND_COUNT_ALL_TABLE}.count + EXCLUDED.count,
           updated_at = EXCLUDED.updated_at
         `,
@@ -568,12 +532,9 @@ async function main() {
       await sql.query(
         `
         WITH input_rows AS (
-          SELECT kind, day_key, view, bucket_key, subject_id, count, updated_at
+          SELECT day_key, subject_id, count, updated_at
           FROM jsonb_to_recordset($1::jsonb) AS t(
-            kind text,
             day_key int,
-            view text,
-            bucket_key text,
             subject_id text,
             count bigint,
             updated_at bigint
@@ -581,20 +542,17 @@ async function main() {
         ),
         folded AS (
           SELECT
-            kind,
             day_key,
-            view,
-            bucket_key,
             subject_id,
             SUM(count)::BIGINT AS count,
             MAX(updated_at)::BIGINT AS updated_at
           FROM input_rows
-          GROUP BY kind, day_key, view, bucket_key, subject_id
+          GROUP BY day_key, subject_id
         )
-        INSERT INTO ${TREND_COUNT_DAY_TABLE} (kind, day_key, view, bucket_key, subject_id, count, updated_at)
-        SELECT kind, day_key, view, bucket_key, subject_id, count, updated_at
+        INSERT INTO ${TREND_COUNT_DAY_TABLE} (day_key, subject_id, count, updated_at)
+        SELECT day_key, subject_id, count, updated_at
         FROM folded
-        ON CONFLICT (kind, day_key, view, bucket_key, subject_id) DO UPDATE SET
+        ON CONFLICT (day_key, subject_id) DO UPDATE SET
           count = ${TREND_COUNT_DAY_TABLE}.count + EXCLUDED.count,
           updated_at = EXCLUDED.updated_at
         `,

@@ -36,6 +36,25 @@ Run migration consistency checks (`old`, `v2`, `alias`, `missing`):
 npm run verify:shares:v2-migration
 ```
 
+## Trend table rebuild (subject-grain)
+
+Current trend tables are:
+
+- `my9_trend_subject_all_v2`
+- `my9_trend_subject_day_v2`
+
+They only store `subject_id + count` (no `kind/view/bucket`) to reduce write amplification and table size.
+
+Rebuild from old trend tables and drop old heavy tables:
+
+```bash
+npm run rebuild:trends:subject-v2
+```
+
+Optional flag:
+
+- `-- --reset` (truncate new trend tables before rebuild)
+
 ## Cold archive + day-count cleanup
 
 ```bash

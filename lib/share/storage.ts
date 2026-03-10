@@ -25,14 +25,13 @@ const SHARES_V1_TABLE = "my9_shares_v1";
 const SHARES_V2_TABLE = "my9_share_registry_v2";
 const SHARE_ALIAS_TABLE = "my9_share_alias_v1";
 const SUBJECT_DIM_TABLE = "my9_subject_dim_v1";
-const TREND_COUNT_ALL_TABLE = "my9_trend_count_all_v1";
-const TREND_COUNT_DAY_TABLE = "my9_trend_count_day_v1";
+const TREND_COUNT_ALL_TABLE = "my9_trend_subject_all_v2";
+const TREND_COUNT_DAY_TABLE = "my9_trend_subject_day_v2";
 const TRENDS_CACHE_TABLE = "my9_trends_cache_v1";
 const SHARES_V2_KIND_CREATED_IDX = `${SHARES_V2_TABLE}_kind_created_idx`;
 const SHARES_V2_TIER_CREATED_IDX = `${SHARES_V2_TABLE}_tier_created_idx`;
 const SHARE_ALIAS_TARGET_IDX = `${SHARE_ALIAS_TABLE}_target_idx`;
-const TREND_ALL_KIND_VIEW_BUCKET_IDX = `${TREND_COUNT_ALL_TABLE}_kind_view_bucket_idx`;
-const TREND_DAY_KIND_VIEW_DAY_IDX = `${TREND_COUNT_DAY_TABLE}_kind_view_day_idx`;
+const SUBJECT_DIM_SUBJECT_IDX = `${SUBJECT_DIM_TABLE}_subject_idx`;
 const TRENDS_CACHE_EXPIRES_IDX = `${TRENDS_CACHE_TABLE}_expires_idx`;
 
 function readEnv(...names: string[]): string | null {
@@ -127,14 +126,14 @@ type SubjectDimRow = {
   genres: unknown;
 };
 
-type TrendCountRow = {
-  bucket_key: string;
+type TrendSubjectCountRow = {
   subject_id: string;
   count: number | string;
   name: string | null;
   localized_name: string | null;
   cover: string | null;
   release_year: number | null;
+  genres: unknown;
 };
 
 type TrendSampleRow = {
@@ -307,38 +306,27 @@ async function ensureSchema(): Promise<boolean> {
           PRIMARY KEY (kind, subject_id)
         )
       `;
+      await sql`
+        CREATE INDEX IF NOT EXISTS ${sql.unsafe(SUBJECT_DIM_SUBJECT_IDX)}
+        ON ${sql.unsafe(SUBJECT_DIM_TABLE)} (subject_id)
+      `;
 
       await sql`
         CREATE TABLE IF NOT EXISTS ${sql.unsafe(TREND_COUNT_ALL_TABLE)} (
-          kind TEXT NOT NULL,
-          view TEXT NOT NULL,
-          bucket_key TEXT NOT NULL,
-          subject_id TEXT NOT NULL,
+          subject_id TEXT PRIMARY KEY,
           count BIGINT NOT NULL,
-          updated_at BIGINT NOT NULL,
-          PRIMARY KEY (kind, view, bucket_key, subject_id)
+          updated_at BIGINT NOT NULL
         )
-      `;
-      await sql`
-        CREATE INDEX IF NOT EXISTS ${sql.unsafe(TREND_ALL_KIND_VIEW_BUCKET_IDX)}
-        ON ${sql.unsafe(TREND_COUNT_ALL_TABLE)} (kind, view, bucket_key)
       `;
 
       await sql`
         CREATE TABLE IF NOT EXISTS ${sql.unsafe(TREND_COUNT_DAY_TABLE)} (
-          kind TEXT NOT NULL,
           day_key INT NOT NULL,
-          view TEXT NOT NULL,
-          bucket_key TEXT NOT NULL,
           subject_id TEXT NOT NULL,
           count BIGINT NOT NULL,
           updated_at BIGINT NOT NULL,
-          PRIMARY KEY (kind, day_key, view, bucket_key, subject_id)
+          PRIMARY KEY (day_key, subject_id)
         )
-      `;
-      await sql`
-        CREATE INDEX IF NOT EXISTS ${sql.unsafe(TREND_DAY_KIND_VIEW_DAY_IDX)}
-        ON ${sql.unsafe(TREND_COUNT_DAY_TABLE)} (kind, view, day_key)
       `;
 
       await sql`
@@ -542,45 +530,27 @@ async function tryListSharesFromV1(sql: SqlClient, from?: number): Promise<Store
 
 type TrendIncrement = {
   dayKey: number;
-  view: TrendView;
-  bucketKey: string;
   subjectId: string;
   count: number;
 };
 
 function buildTrendIncrements(params: {
   payload: CompactSharePayload;
-  subjectSnapshots: Map<string, SubjectSnapshot>;
   createdAt: number;
 }): TrendIncrement[] {
-  const increments: TrendIncrement[] = [];
   const dayKey = toUtcDayKey(params.createdAt);
+  const countBySubject = new Map<string, number>();
 
   for (const slot of params.payload) {
     if (!slot) continue;
-    const subjectId = slot.sid;
-    const snapshot = params.subjectSnapshots.get(subjectId);
-
-    increments.push({ dayKey, view: "overall", bucketKey: "overall", subjectId, count: 1 });
-
-    const genres = snapshot?.genres && snapshot.genres.length > 0 ? snapshot.genres : ["未分类"];
-    for (const genre of genres) {
-      increments.push({ dayKey, view: "genre", bucketKey: genre, subjectId, count: 1 });
-    }
-
-    if (typeof snapshot?.releaseYear === "number") {
-      increments.push({ dayKey, view: "year", bucketKey: String(snapshot.releaseYear), subjectId, count: 1 });
-      increments.push({
-        dayKey,
-        view: "decade",
-        bucketKey: `${Math.floor(snapshot.releaseYear / 10) * 10}s`,
-        subjectId,
-        count: 1,
-      });
-    }
+    countBySubject.set(slot.sid, (countBySubject.get(slot.sid) ?? 0) + 1);
   }
 
-  return increments;
+  return Array.from(countBySubject.entries()).map(([subjectId, count]) => ({
+    dayKey,
+    subjectId,
+    count,
+  }));
 }
 
 export async function saveShare(record: StoredShareV1): Promise<{ shareId: string; deduped: boolean }> {
@@ -616,7 +586,6 @@ export async function saveShare(record: StoredShareV1): Promise<{ shareId: strin
   try {
     const increments = buildTrendIncrements({
       payload,
-      subjectSnapshots,
       createdAt: normalizedRecord.createdAt,
     });
 
@@ -631,8 +600,6 @@ export async function saveShare(record: StoredShareV1): Promise<{ shareId: strin
 
     const incrementRowsPayload = increments.map((item) => ({
       day_key: item.dayKey,
-      view: item.view,
-      bucket_key: item.bucketKey,
       subject_id: item.subjectId,
       count: item.count,
     }));
@@ -690,17 +657,12 @@ export async function saveShare(record: StoredShareV1): Promise<{ shareId: strin
       ),
       increment_rows AS (
         SELECT
-          $2::text AS kind,
           i.day_key,
-          i.view,
-          i.bucket_key,
           i.subject_id,
           i.count,
           $7::bigint AS updated_at
         FROM jsonb_to_recordset(COALESCE($10::jsonb, '[]'::jsonb)) AS i(
           day_key int,
-          view text,
-          bucket_key text,
           subject_id text,
           count bigint
         )
@@ -708,19 +670,19 @@ export async function saveShare(record: StoredShareV1): Promise<{ shareId: strin
         WHERE upsert_share.inserted
       ),
       trend_all_upsert AS (
-        INSERT INTO ${TREND_COUNT_ALL_TABLE} (kind, view, bucket_key, subject_id, count, updated_at)
-        SELECT kind, view, bucket_key, subject_id, count, updated_at
+        INSERT INTO ${TREND_COUNT_ALL_TABLE} (subject_id, count, updated_at)
+        SELECT subject_id, count, updated_at
         FROM increment_rows
-        ON CONFLICT (kind, view, bucket_key, subject_id) DO UPDATE SET
+        ON CONFLICT (subject_id) DO UPDATE SET
           count = ${TREND_COUNT_ALL_TABLE}.count + EXCLUDED.count,
           updated_at = EXCLUDED.updated_at
         RETURNING 1
       ),
       trend_day_upsert AS (
-        INSERT INTO ${TREND_COUNT_DAY_TABLE} (kind, day_key, view, bucket_key, subject_id, count, updated_at)
-        SELECT kind, day_key, view, bucket_key, subject_id, count, updated_at
+        INSERT INTO ${TREND_COUNT_DAY_TABLE} (day_key, subject_id, count, updated_at)
+        SELECT day_key, subject_id, count, updated_at
         FROM increment_rows
-        ON CONFLICT (kind, day_key, view, bucket_key, subject_id) DO UPDATE SET
+        ON CONFLICT (day_key, subject_id) DO UPDATE SET
           count = ${TREND_COUNT_DAY_TABLE}.count + EXCLUDED.count,
           updated_at = EXCLUDED.updated_at
         RETURNING 1
@@ -1043,7 +1005,7 @@ function sortByCount<T extends { count: number }>(items: T[]): T[] {
   return items.sort((a, b) => b.count - a.count);
 }
 
-function createTrendGameItem(row: TrendCountRow): TrendGameItem {
+function createTrendGameItem(row: TrendSubjectCountRow): TrendGameItem {
   const id = row.subject_id;
   const name = row.name || id;
   return {
@@ -1059,14 +1021,26 @@ function createTrendGameItem(row: TrendCountRow): TrendGameItem {
   };
 }
 
-function buildTrendItemsFromCounts(view: TrendView, rows: TrendCountRow[]): TrendBucket[] {
+function normalizeTrendGenres(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => (typeof item === "string" ? item.trim() : ""))
+    .filter((item) => Boolean(item));
+}
+
+function buildTrendItemsFromCounts(view: TrendView, rows: TrendSubjectCountRow[]): TrendBucket[] {
   switch (view) {
     case "genre": {
       const bucketMap = new Map<string, TrendGameItem[]>();
       for (const row of rows) {
-        const list = bucketMap.get(row.bucket_key) || [];
-        list.push(createTrendGameItem(row));
-        bucketMap.set(row.bucket_key, list);
+        const game = createTrendGameItem(row);
+        const genres = normalizeTrendGenres(row.genres);
+        const buckets = genres.length > 0 ? genres : ["未分类"];
+        for (const bucketKey of buckets) {
+          const list = bucketMap.get(bucketKey) || [];
+          list.push(game);
+          bucketMap.set(bucketKey, list);
+        }
       }
       const buckets: TrendBucket[] = [];
       for (const [bucket, games] of Array.from(bucketMap.entries())) {
@@ -1085,9 +1059,15 @@ function buildTrendItemsFromCounts(view: TrendView, rows: TrendCountRow[]): Tren
     case "year": {
       const bucketMap = new Map<string, TrendGameItem[]>();
       for (const row of rows) {
-        const list = bucketMap.get(row.bucket_key) || [];
+        const releaseYear =
+          typeof row.release_year === "number" && Number.isFinite(row.release_year)
+            ? Math.trunc(row.release_year)
+            : null;
+        if (!releaseYear) continue;
+        const bucketKey = view === "year" ? String(releaseYear) : `${Math.floor(releaseYear / 10) * 10}s`;
+        const list = bucketMap.get(bucketKey) || [];
         list.push(createTrendGameItem(row));
-        bucketMap.set(row.bucket_key, list);
+        bucketMap.set(bucketKey, list);
       }
       const buckets: TrendBucket[] = [];
       for (const [bucket, games] of Array.from(bucketMap.entries())) {
@@ -1172,30 +1152,30 @@ export async function getAggregatedTrendResponse(params: {
     period === "all"
       ? ((await sql.query(
           `
-        SELECT c.bucket_key, c.subject_id, c.count, d.name, d.localized_name, d.cover, d.release_year
+        SELECT c.subject_id, c.count, d.name, d.localized_name, d.cover, d.release_year, d.genres
         FROM ${TREND_COUNT_ALL_TABLE} c
-        LEFT JOIN ${SUBJECT_DIM_TABLE} d ON d.kind = c.kind AND d.subject_id = c.subject_id
-        WHERE c.kind = $1 AND c.view = $2
+        JOIN ${SUBJECT_DIM_TABLE} d ON d.subject_id = c.subject_id
+        WHERE d.kind = $1
         `,
-          [kind, view]
-        )) as TrendCountRow[])
+          [kind]
+        )) as TrendSubjectCountRow[])
       : ((await sql.query(
           `
         SELECT
-          c.bucket_key,
           c.subject_id,
           SUM(c.count)::BIGINT AS count,
-          MAX(d.name) AS name,
-          MAX(d.localized_name) AS localized_name,
-          MAX(d.cover) AS cover,
-          MAX(d.release_year) AS release_year
+          d.name,
+          d.localized_name,
+          d.cover,
+          d.release_year,
+          d.genres
         FROM ${TREND_COUNT_DAY_TABLE} c
-        LEFT JOIN ${SUBJECT_DIM_TABLE} d ON d.kind = c.kind AND d.subject_id = c.subject_id
-        WHERE c.kind = $1 AND c.view = $2 AND c.day_key >= $3
-        GROUP BY c.bucket_key, c.subject_id
+        JOIN ${SUBJECT_DIM_TABLE} d ON d.subject_id = c.subject_id
+        WHERE d.kind = $1 AND c.day_key >= $2
+        GROUP BY c.subject_id, d.name, d.localized_name, d.cover, d.release_year, d.genres
         `,
-          [kind, view, fromDayKey]
-        )) as TrendCountRow[]);
+          [kind, fromDayKey]
+        )) as TrendSubjectCountRow[]);
 
   return {
     period,

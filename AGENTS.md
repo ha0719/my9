@@ -13,6 +13,8 @@
 - `components/`：跨页面复用组件（`layout/`、`share/`、`subject/`、`ui/`）。
 - `lib/`：领域逻辑与工具（Bangumi 搜索、分享存储、`subject-kind` 等）。
 - `tests/`：Playwright E2E 用例（当前为 `*.spec.ts`）。
+- `docs/`：运维与排障文档（含分享存储 v2 操作手册）。
+- `scripts/`：迁移/归档/校验脚本。
 - `scripts/playwright-webserver.cjs`：E2E 专用构建与 3001 服务脚本。
 - `screenshot/`：验收截图产物。
 
@@ -23,6 +25,9 @@
 - `npm start`：启动生产构建产物。
 - `npm run lint`：运行 ESLint。
 - `npm run test:e2e`：运行 Playwright E2E。
+- `npm run migrate:shares:v1-to-v2`：将 `my9_shares_v1` 迁移到 v2 存储模型（支持 checkpoint）。
+- `npm run verify:shares:v2-migration`：校验迁移覆盖率（`missing_count`/`orphan_alias_count`）。
+- `npm run archive:shares:cold`：归档 30 天前热数据到 R2，并清理过旧日粒度趋势计数。
 
 说明：
 - 仓库以 `npm` + `package-lock.json` 为准，避免切换包管理器引发锁文件噪音。
@@ -58,7 +63,21 @@
   - 可选：`NEXT_PUBLIC_ENABLE_VERCEL_ANALYTICS=1`（默认关闭，避免额外请求）
   - 可选：`NEXT_PUBLIC_ENABLE_VERCEL_SPEED_INSIGHTS=1`（默认关闭，避免额外请求）
   - 生产环境默认禁用内存 fallback（数据库异常会直接报错）；可用 `MY9_ALLOW_MEMORY_FALLBACK=1` 临时放开
+  - 可选：`MY9_ENABLE_V1_FALLBACK=0`（默认开启 v1 读取兜底；迁移稳定后再关闭）
+  - `R2_ENDPOINT`、`R2_BUCKET`、`R2_ACCESS_KEY_ID`、`R2_SECRET_ACCESS_KEY`
+  - 可选：`R2_REGION=auto`
+  - `CRON_SECRET`（生产环境建议必配，用于保护 `/api/cron/archive`）
+  - 可选：`MY9_ARCHIVE_OLDER_THAN_DAYS`（默认 `30`）
+  - 可选：`MY9_ARCHIVE_BATCH_SIZE`（默认 `500`）
+  - 可选：`MY9_ARCHIVE_CLEANUP_TREND_DAYS`（默认 `190`，勿低于 `180`，否则影响 `180d` 趋势）
 - 分享图封面当前通过 `wsrv.nl` 在前端拉取并绘制；修改该链路时需评估跨域与流量成本影响。
+- 严禁提交任何真实密钥（Neon/R2/CRON）。若误泄露，必须立即旋转并更新环境变量。
+
+## 分享存储 v2 运维
+- 迁移脚本默认读取 `my9_shares_v1`，并写入 `my9_share_registry_v2` / `my9_share_alias_v1` / `my9_subject_dim_v1` / `my9_trend_count_*`。
+- 迁移完成后先执行 `npm run verify:shares:v2-migration`；仅当 `missing_count=0` 且 `orphan_alias_count=0` 才允许考虑关闭 v1 兜底。
+- 日常归档通过 `app/api/cron/archive` 触发，调度配置在 `vercel.json`（当前每天一次，Hobby 层级可用）。
+- 生产切换顺序：`v2 优先 + v1 兜底` -> 全量迁移与校验 -> 关闭兜底 -> 稳定观察后再删除 v1 表。
 
 ## 提交与 PR 建议
 - 提交信息简短、祈使/现在时，聚焦单一改动。

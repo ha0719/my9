@@ -12,7 +12,8 @@
     "analyze:edge-log": "node scripts/analyze-edge-log.mjs",
     "archive:shares:cold": "node scripts/archive-shares-cold.mjs",
     "migrate:shares:v1-to-v2": "node scripts/migrate-shares-v1-to-v2.mjs",
-    "verify:shares:v2-migration": "node scripts/verify-shares-v2-migration.mjs"
+    "verify:shares:v2-migration": "node scripts/verify-shares-v2-migration.mjs",
+    "rebuild:trends:subject-v2": "node scripts/rebuild-trends-subject-v2.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.928.0",
