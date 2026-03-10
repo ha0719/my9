@@ -230,7 +230,7 @@ export function SiteFooter({ className }: SiteFooterProps) {
                 <img
                   src={wechatPayQrUrl}
                   alt="微信赞赏码"
-                  className="h-60 w-60 rounded-lg border border-slate-200 object-contain"
+                  className="h-80 w-80 rounded-lg border border-slate-200 object-contain"
                 />
               </div>
             ) : (
