@@ -406,6 +406,9 @@ export default function TrendsClientPage({
             <div className="space-y-1">
               <h1 className="text-3xl font-bold tracking-tight text-slate-800">大家的构成</h1>
               <p className="text-sm text-slate-600">{topCardSummary}</p>
+              <p className="text-xs text-yellow-500">
+                作品分类和最近24小时的统计方式存在问题，正在修复中……
+              </p>
               <p className="text-xs text-slate-500">
                 当前类别样本数：{data?.sampleCount ?? "-"}
                 {/* 集计区间：{formatDateTime(data?.range.from ?? null)} ～ {formatDateTime(data?.range.to ?? null)} */}
