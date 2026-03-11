@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/react";
 import { SpeedInsights } from "@vercel/speed-insights/next";
 import GoogleAnalytics from "@/components/GoogleAnalytics";
+import Script from 'next/script';
 import "./globals.css";
 
 const ENABLE_VERCEL_ANALYTICS = process.env.NEXT_PUBLIC_ENABLE_VERCEL_ANALYTICS === "1";
@@ -47,6 +48,28 @@ export default function RootLayout({
         {ENABLE_VERCEL_ANALYTICS ? <Analytics /> : null}
         {ENABLE_VERCEL_SPEED_INSIGHTS ? <SpeedInsights /> : null}
         {children}
+        {/* ================= 添加百度统计 ================= */}
+        <Script id="baidu-tongji" strategy="afterInteractive">
+          {`
+            var _hmt = _hmt || [];
+            (function() {
+              var hm = document.createElement("script");
+              // 将下面链接里的 YOUR_BAIDU_ID 换成你自己的百度统计特征码
+              hm.src = "https://hm.baidu.com/hm.js?7a71dce60cae4de0b75f9c4fe45e2a6c";
+              var s = document.getElementsByTagName("script")[0]; 
+              s.parentNode.insertBefore(hm, s);
+            })();
+          `}
+        </Script>
+
+        {/* ================= 添加谷歌广告 AdSense ================= */}
+        {/* 将下面的 YOUR_ADSENSE_ID 换成你自己的 ca-pub-xxxxxx */}
+        <Script
+          async
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-6579450190100468"
+          crossOrigin="anonymous"
+          strategy="afterInteractive"
+        />
       </body>
     </html>
   );
