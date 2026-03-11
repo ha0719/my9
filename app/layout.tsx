@@ -10,7 +10,7 @@ const ENABLE_VERCEL_ANALYTICS = process.env.NEXT_PUBLIC_ENABLE_VERCEL_ANALYTICS 
 const ENABLE_VERCEL_SPEED_INSIGHTS = process.env.NEXT_PUBLIC_ENABLE_VERCEL_SPEED_INSIGHTS === "1";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://my9.shatranj.space"),
+  metadataBase: new URL("https://my9.baozangapp.com"),
   title: "构成我的九部作品",
   description: "挑选 9 部最能代表你的作品，生成并分享你的「构成我的九部作品」页面。",
   alternates: {
